@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { ShoppingCart, Plus, Minus, X, Check, LogOut, Edit2, Trash2, Upload } from "lucide-react";
-import { CldUploadWidget } from 'cloudinary-react';
+import { CldUploadWidget } from '@cloudinary/react';
 import { db } from "./firebase";
 import {
   collection,
