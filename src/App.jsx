@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { ShoppingCart, Plus, Minus, X, Check, LogOut, Edit2, Trash2, Upload } from "lucide-react";
-import { db, storage } from "./firebase";
+import { CldUploadWidget } from 'cloudinary-react';
+import { db } from "./firebase";
 import {
   collection,
   addDoc,
@@ -9,57 +10,10 @@ import {
   updateDoc,
   onSnapshot,
 } from "firebase/firestore";
-import {
-  ref,
-  uploadBytes,
-  getDownloadURL,
-  deleteObject,
-} from "firebase/storage";
 
 const SHOP_OWNER_PHONE = "917299731118";
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || "admin123";
-
-/* ===============================
-   IMAGE COMPRESSION UTILITY
-================================ */
-async function compressImage(file) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.readAsImage = true;
-    reader.onload = (event) => {
-      const img = new Image();
-      img.src = event.target.result;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let { width, height } = img;
-        
-        // Resize if too large
-        const maxWidth = 1920;
-        const maxHeight = 1920;
-        if (width > maxWidth || height > maxHeight) {
-          const ratio = Math.min(maxWidth / width, maxHeight / height);
-          width *= ratio;
-          height *= ratio;
-        }
-        
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-        
-        // Convert to blob with compression
-        canvas.toBlob(
-          (blob) => {
-            resolve(new File([blob], file.name, { type: 'image/jpeg' }));
-          },
-          'image/jpeg',
-          0.8 // 80% quality
-        );
-      };
-    };
-    reader.readAsDataURL(file);
-  });
-}
+const CLOUDINARY_CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
 
 /* ===============================
    ADMIN LOGIN
@@ -93,7 +47,7 @@ function AdminLogin({ onLogin }) {
 }
 
 /* ===============================
-   ADMIN DASHBOARD (Desktop optimized - that's fine)
+   ADMIN DASHBOARD
 ================================ */
 function AdminDashboard({ onLogout }) {
   const [products, setProducts] = useState([]);
@@ -116,39 +70,22 @@ function AdminDashboard({ onLogout }) {
     return () => unsubscribe();
   }, []);
 
-  const handleImageSelect = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setFormData({ ...formData, image: file, imagePreview: event.target.result });
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
   const handleSave = async () => {
     if (!formData.name || !formData.price || !formData.category || !formData.description) {
       alert("Please fill all fields");
       return;
     }
 
-    if (!editingId && !formData.image) {
+    if (!editingId && !formData.imagePreview) {
       alert("Please select an image");
       return;
     }
 
     setUploading(true);
-    let imageUrl = formData.imagePreview;
 
     try {
-      if (formData.image && storage) {
-        // Compress image before upload
-        const compressedFile = await compressImage(formData.image);
-        const storageRef = ref(storage, `products/${Date.now()}_${formData.image.name}`);
-        await uploadBytes(storageRef, compressedFile);
-        imageUrl = await getDownloadURL(storageRef);
-      }
+      // imagePreview is already set from Cloudinary widget
+      const imageUrl = formData.imagePreview;
 
       const productData = {
         name: formData.name,
@@ -156,7 +93,7 @@ function AdminDashboard({ onLogout }) {
         category: formData.category,
         description: formData.description,
         image: imageUrl,
-        updatedAt: new Date(), // Add timestamp to trigger real-time updates
+        updatedAt: new Date(),
       };
 
       if (editingId) {
@@ -182,14 +119,6 @@ function AdminDashboard({ onLogout }) {
     if (!window.confirm("Are you sure?")) return;
     try {
       await deleteDoc(doc(db, "products", id));
-      if (imageUrl && imageUrl.includes("firebasestorage")) {
-        try {
-          const imageRef = ref(storage, imageUrl);
-          await deleteObject(imageRef);
-        } catch (e) {
-          console.log("Image delete error");
-        }
-      }
       setMessage("✓ Deleted!");
       setTimeout(() => setMessage(""), 2000);
     } catch (error) {
@@ -250,19 +179,37 @@ function AdminDashboard({ onLogout }) {
                 </select>
                 <textarea placeholder="Description" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} style={{ padding: '12px', border: '2px solid #e5e7eb', borderRadius: '8px', minHeight: '100px', boxSizing: 'border-box', fontSize: '16px', fontFamily: 'inherit' }} />
 
-                <label style={{ border: '2px dashed #e5e7eb', borderRadius: '8px', padding: '24px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f9fafb' }}>
-                  <Upload size={32} style={{ marginBottom: '8px', color: '#6b7280' }} />
-                  <div style={{ fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Click to upload image</div>
-                  <div style={{ fontSize: '13px', color: '#9ca3af' }}>PNG, JPG up to 5MB (auto-compressed)</div>
-                  <input type="file" accept="image/*" onChange={handleImageSelect} style={{ display: 'none' }} />
-                </label>
+                <CldUploadWidget
+                  cloudName={CLOUDINARY_CLOUD_NAME}
+                  uploadPreset="little_patisserie"
+                  onSuccess={(result) => {
+                    setFormData({
+                      ...formData,
+                      imagePreview: result.event.info.secure_url,
+                    });
+                  }}
+                >
+                  {({ open }) => (
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => open()}
+                        style={{ width: '100%', border: '2px dashed #e5e7eb', borderRadius: '8px', padding: '24px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f9fafb', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '16px', minHeight: '120px' }}
+                      >
+                        <Upload size={32} style={{ color: '#6b7280' }} />
+                        <div style={{ fontWeight: '500', color: '#374151' }}>Click to upload image</div>
+                        <div style={{ fontSize: '13px', color: '#9ca3af' }}>PNG, JPG (auto-compressed)</div>
+                      </button>
+                    </div>
+                  )}
+                </CldUploadWidget>
 
                 {formData.imagePreview && <img src={formData.imagePreview} alt="Preview" style={{ width: '100%', height: '180px', objectFit: 'cover', borderRadius: '8px' }} />}
 
                 <div style={{ display: 'flex', gap: '12px' }}>
                   <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '2px solid #e5e7eb', backgroundColor: 'white', cursor: 'pointer', fontWeight: '600', minHeight: '48px', fontSize: '16px' }}>Cancel</button>
                   <button onClick={handleSave} disabled={uploading} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: uploading ? '#9ca3af' : '#f43f5e', color: 'white', cursor: uploading ? 'not-allowed' : 'pointer', fontWeight: 'bold', minHeight: '48px', fontSize: '16px' }}>
-                    {uploading ? 'Uploading...' : 'Save'}
+                    {uploading ? 'Saving...' : 'Save'}
                   </button>
                 </div>
               </div>
@@ -354,7 +301,6 @@ function UserShop({ onAdminClick }) {
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f9fafb' }}>
-      {/* Header - Mobile Optimized */}
       <header style={{ backgroundColor: 'white', borderBottom: '1px solid #e5e7eb', position: 'sticky', top: 0, zIndex: 50, boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
         <div style={{ width: '100%', maxWidth: '480px', margin: '0 auto', padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -371,9 +317,7 @@ function UserShop({ onAdminClick }) {
         </div>
       </header>
 
-      {/* Main Content */}
       <div style={{ maxWidth: '100%', margin: '0 auto', padding: 'clamp(12px, 4vw, 20px)' }}>
-        {/* Category Pills - Responsive */}
         <div style={{ marginBottom: 'clamp(16px, 4vw, 24px)', overflowX: 'auto', paddingBottom: '8px', scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch' }}>
           <div style={{ display: 'flex', gap: '8px', minWidth: 'fit-content', paddingRight: '16px' }}>
             {categories.map(cat => (
@@ -384,7 +328,6 @@ function UserShop({ onAdminClick }) {
           </div>
         </div>
 
-        {/* Product Grid - Mobile-First Auto-Fit */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'clamp(12px, 3vw, 16px)', paddingBottom: '120px' }}>
           {filtered.map(item => (
             <div key={item.id} style={{ backgroundColor: 'white', borderRadius: '10px', border: '1px solid #e5e7eb', overflow: 'hidden', display: 'flex', flexDirection: 'column', transition: 'transform 0.2s, box-shadow 0.2s' }}>
@@ -410,7 +353,6 @@ function UserShop({ onAdminClick }) {
         </div>
       </div>
 
-      {/* Floating Cart Button */}
       {cartCount > 0 && (
         <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, padding: 'clamp(12px, 3vw, 16px)', background: 'linear-gradient(to top, white 70%, transparent)', zIndex: 30 }}>
           <button onClick={() => setShowCart(true)} style={{ width: '100%', backgroundColor: '#f43f5e', color: 'white', padding: 'clamp(12px, 3vw, 14px)', borderRadius: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: 'none', cursor: 'pointer', fontSize: 'clamp(13px, 3vw, 15px)', minHeight: '48px' }}>
@@ -420,7 +362,6 @@ function UserShop({ onAdminClick }) {
         </div>
       )}
 
-      {/* Cart Modal - Full screen on mobile, centered on desktop */}
       {showCart && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
           <div style={{ backgroundColor: 'white', width: '100%', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
