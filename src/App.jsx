@@ -17,7 +17,49 @@ import {
 } from "firebase/storage";
 
 const SHOP_OWNER_PHONE = "917299731118";
-const ADMIN_PASSWORD = "admin123";
+const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || "admin123";
+
+/* ===============================
+   IMAGE COMPRESSION UTILITY
+================================ */
+async function compressImage(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.readAsImage = true;
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let { width, height } = img;
+        
+        // Resize if too large
+        const maxWidth = 1920;
+        const maxHeight = 1920;
+        if (width > maxWidth || height > maxHeight) {
+          const ratio = Math.min(maxWidth / width, maxHeight / height);
+          width *= ratio;
+          height *= ratio;
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Convert to blob with compression
+        canvas.toBlob(
+          (blob) => {
+            resolve(new File([blob], file.name, { type: 'image/jpeg' }));
+          },
+          'image/jpeg',
+          0.8 // 80% quality
+        );
+      };
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 /* ===============================
    ADMIN LOGIN
@@ -28,20 +70,20 @@ function AdminLogin({ onLogin }) {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f9fafb', padding: '16px' }}>
-      <div style={{ backgroundColor: 'white', borderRadius: '16px', padding: '32px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', maxWidth: '400px', width: '100%' }}>
-        <h1 style={{ fontSize: '28px', fontWeight: 'bold', textAlign: 'center', marginBottom: '24px', marginTop: 0 }}>Admin Login</h1>
+      <div style={{ backgroundColor: 'white', borderRadius: '16px', padding: 'clamp(24px, 5vw, 32px)', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)', maxWidth: '400px', width: '100%' }}>
+        <h1 style={{ fontSize: 'clamp(24px, 6vw, 28px)', fontWeight: 'bold', textAlign: 'center', marginBottom: '24px', marginTop: 0 }}>Admin Login</h1>
         <input
           type="password"
           placeholder="Enter Password"
           value={password}
           onChange={(e) => { setPassword(e.target.value); setError(""); }}
           onKeyPress={(e) => e.key === 'Enter' && (password === ADMIN_PASSWORD ? onLogin() : setError("Invalid password"))}
-          style={{ width: '100%', padding: '12px', border: '2px solid #e5e7eb', borderRadius: '8px', boxSizing: 'border-box', marginBottom: '12px', fontSize: '16px' }}
+          style={{ width: '100%', padding: '12px', border: '2px solid #e5e7eb', borderRadius: '8px', boxSizing: 'border-box', marginBottom: '12px', fontSize: '16px', minHeight: '44px' }}
         />
         {error && <p style={{ color: '#ef4444', textAlign: 'center', marginBottom: '12px' }}>{error}</p>}
         <button
           onClick={() => password === ADMIN_PASSWORD ? onLogin() : setError("Invalid password")}
-          style={{ width: '100%', backgroundColor: '#f43f5e', color: 'white', padding: '12px', borderRadius: '8px', fontWeight: 'bold', border: 'none', cursor: 'pointer', fontSize: '16px' }}
+          style={{ width: '100%', backgroundColor: '#f43f5e', color: 'white', padding: '12px', borderRadius: '8px', fontWeight: 'bold', border: 'none', cursor: 'pointer', fontSize: '16px', minHeight: '48px' }}
         >
           Login
         </button>
@@ -51,7 +93,7 @@ function AdminLogin({ onLogin }) {
 }
 
 /* ===============================
-   ADMIN DASHBOARD
+   ADMIN DASHBOARD (Desktop optimized - that's fine)
 ================================ */
 function AdminDashboard({ onLogout }) {
   const [products, setProducts] = useState([]);
@@ -62,11 +104,13 @@ function AdminDashboard({ onLogout }) {
   const [message, setMessage] = useState("");
   const [uploading, setUploading] = useState(false);
 
-  // Real-time listener for products from Firestore
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, "products"), (snapshot) => {
       const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
       setProducts(data);
+      setLoading(false);
+    }, (error) => {
+      console.error("Firestore error:", error);
       setLoading(false);
     });
     return () => unsubscribe();
@@ -98,9 +142,11 @@ function AdminDashboard({ onLogout }) {
     let imageUrl = formData.imagePreview;
 
     try {
-      if (formData.image) {
+      if (formData.image && storage) {
+        // Compress image before upload
+        const compressedFile = await compressImage(formData.image);
         const storageRef = ref(storage, `products/${Date.now()}_${formData.image.name}`);
-        await uploadBytes(storageRef, formData.image);
+        await uploadBytes(storageRef, compressedFile);
         imageUrl = await getDownloadURL(storageRef);
       }
 
@@ -110,6 +156,7 @@ function AdminDashboard({ onLogout }) {
         category: formData.category,
         description: formData.description,
         image: imageUrl,
+        updatedAt: new Date(), // Add timestamp to trigger real-time updates
       };
 
       if (editingId) {
@@ -167,7 +214,7 @@ function AdminDashboard({ onLogout }) {
     <div style={{ minHeight: '100vh', backgroundColor: '#f9fafb' }}>
       <header style={{ backgroundColor: 'white', borderBottom: '1px solid #e5e7eb', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 40 }}>
         <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: 0 }}>Admin Dashboard</h1>
-        <button onClick={onLogout} style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#ef4444', color: 'white', padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '600' }}>
+        <button onClick={onLogout} style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#ef4444', color: 'white', padding: '8px 16px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: '600', minHeight: '44px' }}>
           <LogOut size={18} /> Logout
         </button>
       </header>
@@ -177,7 +224,7 @@ function AdminDashboard({ onLogout }) {
 
         <button
           onClick={() => { setEditingId(null); setFormData({ name: '', price: '', category: '', description: '', image: null, imagePreview: '' }); setShowForm(true); }}
-          style={{ width: '100%', backgroundColor: '#f43f5e', color: 'white', padding: '12px', borderRadius: '8px', fontWeight: 'bold', border: 'none', cursor: 'pointer', marginBottom: '24px', fontSize: '16px' }}
+          style={{ width: '100%', backgroundColor: '#f43f5e', color: 'white', padding: '12px', borderRadius: '8px', fontWeight: 'bold', border: 'none', cursor: 'pointer', marginBottom: '24px', fontSize: '16px', minHeight: '48px' }}
         >
           + Add Product
         </button>
@@ -189,32 +236,32 @@ function AdminDashboard({ onLogout }) {
             <div style={{ backgroundColor: 'white', width: '100%', maxWidth: '500px', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '24px', maxHeight: '90vh', overflowY: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                 <h2 style={{ margin: 0 }}>{editingId ? 'Edit' : 'Add'} Product</h2>
-                <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '24px' }}>×</button>
+                <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '24px', minHeight: '44px', minWidth: '44px' }}>×</button>
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <input type="text" placeholder="Product Name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} style={{ padding: '10px', border: '2px solid #e5e7eb', borderRadius: '8px', boxSizing: 'border-box', fontSize: '14px' }} />
-                <input type="number" placeholder="Price (₹)" value={formData.price} onChange={(e) => setFormData({ ...formData, price: e.target.value })} style={{ padding: '10px', border: '2px solid #e5e7eb', borderRadius: '8px', boxSizing: 'border-box', fontSize: '14px' }} />
-                <select value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} style={{ padding: '10px', border: '2px solid #e5e7eb', borderRadius: '8px', boxSizing: 'border-box', fontSize: '14px' }}>
+                <input type="text" placeholder="Product Name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} style={{ padding: '12px', border: '2px solid #e5e7eb', borderRadius: '8px', boxSizing: 'border-box', fontSize: '16px', minHeight: '44px' }} />
+                <input type="number" placeholder="Price (₹)" value={formData.price} onChange={(e) => setFormData({ ...formData, price: e.target.value })} style={{ padding: '12px', border: '2px solid #e5e7eb', borderRadius: '8px', boxSizing: 'border-box', fontSize: '16px', minHeight: '44px' }} />
+                <select value={formData.category} onChange={(e) => setFormData({ ...formData, category: e.target.value })} style={{ padding: '12px', border: '2px solid #e5e7eb', borderRadius: '8px', boxSizing: 'border-box', fontSize: '16px', minHeight: '44px' }}>
                   <option value="">Select Category</option>
                   <option>Cakes</option>
                   <option>Cupcakes</option>
                   <option>Pastries</option>
                 </select>
-                <textarea placeholder="Description" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} style={{ padding: '10px', border: '2px solid #e5e7eb', borderRadius: '8px', minHeight: '80px', boxSizing: 'border-box', fontSize: '14px', fontFamily: 'inherit' }} />
+                <textarea placeholder="Description" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} style={{ padding: '12px', border: '2px solid #e5e7eb', borderRadius: '8px', minHeight: '100px', boxSizing: 'border-box', fontSize: '16px', fontFamily: 'inherit' }} />
 
-                <label style={{ border: '2px dashed #e5e7eb', borderRadius: '8px', padding: '20px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f9fafb' }}>
-                  <Upload size={28} style={{ marginBottom: '8px', color: '#6b7280' }} />
-                  <div style={{ fontWeight: '500', color: '#374151' }}>Click to upload image</div>
-                  <div style={{ fontSize: '12px', color: '#9ca3af' }}>PNG, JPG up to 5MB</div>
+                <label style={{ border: '2px dashed #e5e7eb', borderRadius: '8px', padding: '24px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f9fafb' }}>
+                  <Upload size={32} style={{ marginBottom: '8px', color: '#6b7280' }} />
+                  <div style={{ fontWeight: '500', color: '#374151', marginBottom: '4px' }}>Click to upload image</div>
+                  <div style={{ fontSize: '13px', color: '#9ca3af' }}>PNG, JPG up to 5MB (auto-compressed)</div>
                   <input type="file" accept="image/*" onChange={handleImageSelect} style={{ display: 'none' }} />
                 </label>
 
-                {formData.imagePreview && <img src={formData.imagePreview} alt="Preview" style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: '8px' }} />}
+                {formData.imagePreview && <img src={formData.imagePreview} alt="Preview" style={{ width: '100%', height: '180px', objectFit: 'cover', borderRadius: '8px' }} />}
 
                 <div style={{ display: 'flex', gap: '12px' }}>
-                  <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '2px solid #e5e7eb', backgroundColor: 'white', cursor: 'pointer', fontWeight: '600' }}>Cancel</button>
-                  <button onClick={handleSave} disabled={uploading} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: uploading ? '#9ca3af' : '#f43f5e', color: 'white', cursor: uploading ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}>
+                  <button onClick={() => setShowForm(false)} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '2px solid #e5e7eb', backgroundColor: 'white', cursor: 'pointer', fontWeight: '600', minHeight: '48px', fontSize: '16px' }}>Cancel</button>
+                  <button onClick={handleSave} disabled={uploading} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: uploading ? '#9ca3af' : '#f43f5e', color: 'white', cursor: uploading ? 'not-allowed' : 'pointer', fontWeight: 'bold', minHeight: '48px', fontSize: '16px' }}>
                     {uploading ? 'Uploading...' : 'Save'}
                   </button>
                 </div>
@@ -224,17 +271,17 @@ function AdminDashboard({ onLogout }) {
         )}
 
         {!loading && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
             {products.map(p => (
               <div key={p.id} style={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-                <img src={p.image} alt={p.name} style={{ width: '100%', height: '150px', objectFit: 'cover' }} />
-                <div style={{ padding: '12px' }}>
-                  <h3 style={{ fontSize: '14px', fontWeight: '600', margin: 0 }}>{p.name}</h3>
-                  <p style={{ fontSize: '12px', color: '#6b7280', margin: '4px 0' }}>{p.category}</p>
-                  <p style={{ fontSize: '16px', fontWeight: 'bold', color: '#f43f5e', margin: '0 0 12px 0' }}>₹{p.price}</p>
+                <img src={p.image} alt={p.name} style={{ width: '100%', height: '180px', objectFit: 'cover' }} />
+                <div style={{ padding: '16px' }}>
+                  <h3 style={{ fontSize: '16px', fontWeight: '600', margin: 0 }}>{p.name}</h3>
+                  <p style={{ fontSize: '14px', color: '#6b7280', margin: '4px 0' }}>{p.category}</p>
+                  <p style={{ fontSize: '18px', fontWeight: 'bold', color: '#f43f5e', margin: '0 0 14px 0' }}>₹{p.price}</p>
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    <button onClick={() => handleEdit(p)} style={{ flex: 1, padding: '8px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', fontSize: '12px' }}><Edit2 size={14} /> Edit</button>
-                    <button onClick={() => handleDelete(p.id, p.image)} style={{ flex: 1, padding: '8px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', fontSize: '12px' }}><Trash2 size={14} /> Delete</button>
+                    <button onClick={() => handleEdit(p)} style={{ flex: 1, padding: '10px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', fontSize: '14px', minHeight: '44px' }}><Edit2 size={16} /> Edit</button>
+                    <button onClick={() => handleDelete(p.id, p.image)} style={{ flex: 1, padding: '10px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', fontSize: '14px', minHeight: '44px' }}><Trash2 size={16} /> Delete</button>
                   </div>
                 </div>
               </div>
@@ -247,7 +294,7 @@ function AdminDashboard({ onLogout }) {
 }
 
 /* ===============================
-   USER SHOP (MOBILE OPTIMIZED)
+   USER SHOP (MOBILE-FIRST OPTIMIZED)
 ================================ */
 function UserShop({ onAdminClick }) {
   const [cart, setCart] = useState({});
@@ -260,11 +307,13 @@ function UserShop({ onAdminClick }) {
   const [loading, setLoading] = useState(true);
   const [showAdminBtn, setShowAdminBtn] = useState(false);
 
-  // Real-time listener for products from Firestore
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, "products"), (snapshot) => {
       const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
       setProducts(data);
+      setLoading(false);
+    }, (error) => {
+      console.error("Firestore error:", error);
       setLoading(false);
     });
     return () => unsubscribe();
@@ -305,50 +354,54 @@ function UserShop({ onAdminClick }) {
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f9fafb' }}>
+      {/* Header - Mobile Optimized */}
       <header style={{ backgroundColor: 'white', borderBottom: '1px solid #e5e7eb', position: 'sticky', top: 0, zIndex: 50, boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-          <div style={{ flex: 1 }}>
-            <h1 style={{ fontSize: '18px', fontWeight: 'bold', margin: 0 }}>The Little Patisserie</h1>
-            <p style={{ fontSize: '12px', color: '#6b7280', margin: '4px 0 0 0', cursor: 'pointer' }} onClick={() => setShowAdminBtn(!showAdminBtn)}>Handcrafted with love</p>
+        <div style={{ width: '100%', maxWidth: '480px', margin: '0 auto', padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h1 style={{ fontSize: 'clamp(16px, 4vw, 20px)', fontWeight: 'bold', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>The Little Patisserie</h1>
+            <p style={{ fontSize: 'clamp(11px, 3vw, 13px)', color: '#6b7280', margin: '2px 0 0 0', cursor: 'pointer' }} onClick={() => setShowAdminBtn(!showAdminBtn)}>Handcrafted with love</p>
           </div>
           {showAdminBtn && (
-            <button onClick={() => onAdminClick()} style={{ fontSize: '11px', padding: '4px 8px', backgroundColor: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: '6px', cursor: 'pointer', fontWeight: '500' }}>Admin</button>
+            <button onClick={() => onAdminClick()} style={{ fontSize: '12px', padding: '6px 10px', backgroundColor: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: '6px', cursor: 'pointer', fontWeight: '500', minHeight: '40px', whiteSpace: 'nowrap' }}>Admin</button>
           )}
-          <button onClick={() => setShowCart(true)} style={{ position: 'relative', backgroundColor: '#f43f5e', color: 'white', padding: '8px 16px', borderRadius: '8px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px', border: 'none', cursor: 'pointer' }}>
-            <ShoppingCart size={18} />
-            {cartCount > 0 && <span style={{ position: 'absolute', top: '-6px', right: '-6px', backgroundColor: '#f97316', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold' }}>{cartCount}</span>}
+          <button onClick={() => setShowCart(true)} style={{ position: 'relative', backgroundColor: '#f43f5e', color: 'white', padding: 'clamp(8px, 2vw, 12px)', borderRadius: '8px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px', border: 'none', cursor: 'pointer', minHeight: '44px', minWidth: '44px' }}>
+            <ShoppingCart size={20} />
+            {cartCount > 0 && <span style={{ position: 'absolute', top: '-8px', right: '-8px', backgroundColor: '#f97316', width: '22px', height: '22px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold' }}>{cartCount}</span>}
           </button>
         </div>
       </header>
 
-      <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '16px' }}>
-        <div style={{ marginBottom: '20px', overflowX: 'auto', paddingBottom: '8px' }}>
-          <div style={{ display: 'flex', gap: '8px' }}>
+      {/* Main Content */}
+      <div style={{ maxWidth: '100%', margin: '0 auto', padding: 'clamp(12px, 4vw, 20px)' }}>
+        {/* Category Pills - Responsive */}
+        <div style={{ marginBottom: 'clamp(16px, 4vw, 24px)', overflowX: 'auto', paddingBottom: '8px', scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch' }}>
+          <div style={{ display: 'flex', gap: '8px', minWidth: 'fit-content', paddingRight: '16px' }}>
             {categories.map(cat => (
-              <button key={cat} onClick={() => setSelectedCategory(cat)} style={{ padding: '8px 16px', borderRadius: '20px', whiteSpace: 'nowrap', border: selectedCategory === cat ? 'none' : '1px solid #e5e7eb', backgroundColor: selectedCategory === cat ? '#f43f5e' : 'white', color: selectedCategory === cat ? 'white' : '#374151', cursor: 'pointer', fontWeight: '500', fontSize: '13px' }}>
+              <button key={cat} onClick={() => setSelectedCategory(cat)} style={{ padding: 'clamp(8px, 2vw, 10px) clamp(12px, 3vw, 16px)', borderRadius: '20px', whiteSpace: 'nowrap', border: selectedCategory === cat ? 'none' : '1px solid #e5e7eb', backgroundColor: selectedCategory === cat ? '#f43f5e' : 'white', color: selectedCategory === cat ? 'white' : '#374151', cursor: 'pointer', fontWeight: '500', fontSize: 'clamp(12px, 3vw, 14px)', minHeight: '40px', transition: 'all 0.2s' }}>
                 {cat}
               </button>
             ))}
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px', paddingBottom: '100px' }}>
+        {/* Product Grid - Mobile-First Auto-Fit */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 'clamp(12px, 3vw, 16px)', paddingBottom: '120px' }}>
           {filtered.map(item => (
-            <div key={item.id} style={{ backgroundColor: 'white', borderRadius: '10px', border: '1px solid #e5e7eb', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              <img src={item.image} alt={item.name} style={{ width: '100%', height: '120px', objectFit: 'cover' }} />
-              <div style={{ padding: '10px', flex: 1, display: 'flex', flexDirection: 'column' }}>
-                <h3 style={{ fontSize: '12px', fontWeight: '600', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</h3>
-                <p style={{ fontSize: '11px', color: '#6b7280', margin: '4px 0 auto 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description}</p>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '8px' }}>
-                  <span style={{ fontSize: '14px', fontWeight: 'bold' }}>₹{item.price}</span>
+            <div key={item.id} style={{ backgroundColor: 'white', borderRadius: '10px', border: '1px solid #e5e7eb', overflow: 'hidden', display: 'flex', flexDirection: 'column', transition: 'transform 0.2s, box-shadow 0.2s' }}>
+              <img src={item.image} alt={item.name} style={{ width: '100%', height: 'clamp(100px, 25vw, 130px)', objectFit: 'cover' }} />
+              <div style={{ padding: 'clamp(10px, 2vw, 12px)', flex: 1, display: 'flex', flexDirection: 'column' }}>
+                <h3 style={{ fontSize: 'clamp(12px, 3vw, 14px)', fontWeight: '600', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</h3>
+                <p style={{ fontSize: 'clamp(10px, 2.5vw, 12px)', color: '#6b7280', margin: 'clamp(4px, 1vw, 6px) 0 auto 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description}</p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 'clamp(8px, 2vw, 10px)', gap: '8px' }}>
+                  <span style={{ fontSize: 'clamp(13px, 3vw, 15px)', fontWeight: 'bold' }}>₹{item.price}</span>
                   {cart[item.id] ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#f43f5e', color: 'white', borderRadius: '6px', padding: '3px 6px' }}>
-                      <button onClick={() => removeFromCart(item.id)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: '1px' }}><Minus size={12} /></button>
-                      <span style={{ fontSize: '12px', fontWeight: 'bold', minWidth: '16px', textAlign: 'center' }}>{cart[item.id]}</span>
-                      <button onClick={() => addToCart(item.id)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: '1px' }}><Plus size={12} /></button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px', backgroundColor: '#f43f5e', color: 'white', borderRadius: '6px', padding: '4px 6px' }}>
+                      <button onClick={() => removeFromCart(item.id)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: '4px', display: 'flex', minHeight: '32px', minWidth: '32px', alignItems: 'center', justifyContent: 'center' }}><Minus size={14} /></button>
+                      <span style={{ fontSize: '12px', fontWeight: 'bold', minWidth: '18px', textAlign: 'center' }}>{cart[item.id]}</span>
+                      <button onClick={() => addToCart(item.id)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', padding: '4px', display: 'flex', minHeight: '32px', minWidth: '32px', alignItems: 'center', justifyContent: 'center' }}><Plus size={14} /></button>
                     </div>
                   ) : (
-                    <button onClick={() => addToCart(item.id)} style={{ backgroundColor: 'white', color: '#f43f5e', border: '1.5px solid #f43f5e', padding: '4px 12px', borderRadius: '6px', fontWeight: '600', fontSize: '11px', cursor: 'pointer' }}>Add</button>
+                    <button onClick={() => addToCart(item.id)} style={{ backgroundColor: 'white', color: '#f43f5e', border: '1.5px solid #f43f5e', padding: 'clamp(6px, 1.5vw, 8px) clamp(10px, 2vw, 14px)', borderRadius: '6px', fontWeight: '600', fontSize: 'clamp(11px, 2.5vw, 13px)', cursor: 'pointer', minHeight: '36px', transition: 'all 0.2s' }}>Add</button>
                   )}
                 </div>
               </div>
@@ -357,24 +410,26 @@ function UserShop({ onAdminClick }) {
         </div>
       </div>
 
+      {/* Floating Cart Button */}
       {cartCount > 0 && (
-        <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, padding: '12px', background: 'linear-gradient(to top, white, white, transparent)', zIndex: 30 }}>
-          <button onClick={() => setShowCart(true)} style={{ width: '100%', backgroundColor: '#f43f5e', color: 'white', padding: '12px', borderRadius: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: 'none', cursor: 'pointer', fontSize: '13px' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><ShoppingCart size={16} /> {cartCount} items</span>
+        <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, padding: 'clamp(12px, 3vw, 16px)', background: 'linear-gradient(to top, white 70%, transparent)', zIndex: 30 }}>
+          <button onClick={() => setShowCart(true)} style={{ width: '100%', backgroundColor: '#f43f5e', color: 'white', padding: 'clamp(12px, 3vw, 14px)', borderRadius: '10px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: 'none', cursor: 'pointer', fontSize: 'clamp(13px, 3vw, 15px)', minHeight: '48px' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}><ShoppingCart size={18} /> {cartCount} {cartCount === 1 ? "item" : "items"}</span>
             <span>₹{total}</span>
           </button>
         </div>
       )}
 
+      {/* Cart Modal - Full screen on mobile, centered on desktop */}
       {showCart && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}>
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
           <div style={{ backgroundColor: 'white', width: '100%', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ backgroundColor: '#f43f5e', color: 'white', padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div><h2 style={{ margin: 0, fontSize: '18px' }}>Your Cart</h2><p style={{ margin: '4px 0 0 0', fontSize: '12px' }}>{cartCount} items</p></div>
-              <button onClick={() => setShowCart(false)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}><X size={24} /></button>
+            <div style={{ backgroundColor: '#f43f5e', color: 'white', padding: 'clamp(14px, 3vw, 16px)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div><h2 style={{ margin: 0, fontSize: 'clamp(18px, 4vw, 20px)' }}>Your Cart</h2><p style={{ margin: '4px 0 0 0', fontSize: '12px' }}>{cartCount} items</p></div>
+              <button onClick={() => setShowCart(false)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', minHeight: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={24} /></button>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: 'clamp(12px, 3vw, 16px)' }}>
               {cartCount === 0 ? (
                 <div style={{ textAlign: 'center', color: '#6b7280', padding: '40px 0' }}>
                   <ShoppingCart size={48} style={{ margin: '0 auto 16px', opacity: 0.2 }} />
@@ -387,17 +442,17 @@ function UserShop({ onAdminClick }) {
                     return item ? (
                       <div key={id} style={{ display: 'flex', gap: '10px', backgroundColor: '#f9fafb', borderRadius: '10px', padding: '10px', border: '1px solid #e5e7eb' }}>
                         <img src={item.image} alt={item.name} style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '6px' }} />
-                        <div style={{ flex: 1 }}>
-                          <h3 style={{ fontSize: '13px', fontWeight: '600', margin: 0 }}>{item.name}</h3>
-                          <p style={{ fontSize: '13px', fontWeight: 'bold', color: '#f43f5e', margin: 0 }}>₹{item.price}</p>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <h3 style={{ fontSize: 'clamp(12px, 3vw, 14px)', fontWeight: '600', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</h3>
+                          <p style={{ fontSize: 'clamp(12px, 3vw, 14px)', fontWeight: 'bold', color: '#f43f5e', margin: 0 }}>₹{item.price}</p>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'white', borderRadius: '6px', padding: '3px 6px', border: '1px solid #e5e7eb' }}>
-                            <button onClick={() => removeFromCart(id)} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', padding: '2px' }}><Minus size={12} /></button>
+                            <button onClick={() => removeFromCart(id)} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', padding: '4px', display: 'flex', minHeight: '32px', minWidth: '32px', alignItems: 'center', justifyContent: 'center' }}><Minus size={12} /></button>
                             <span style={{ fontSize: '12px', fontWeight: 'bold', minWidth: '14px', textAlign: 'center' }}>{qty}</span>
-                            <button onClick={() => addToCart(id)} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', padding: '2px' }}><Plus size={12} /></button>
+                            <button onClick={() => addToCart(id)} style={{ background: 'none', border: 'none', color: '#6b7280', cursor: 'pointer', padding: '4px', display: 'flex', minHeight: '32px', minWidth: '32px', alignItems: 'center', justifyContent: 'center' }}><Plus size={12} /></button>
                           </div>
-                          <button onClick={() => deleteFromCart(id)} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '11px', cursor: 'pointer', fontWeight: '500' }}>Remove</button>
+                          <button onClick={() => deleteFromCart(id)} style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '11px', cursor: 'pointer', fontWeight: '500', minHeight: '32px' }}>Remove</button>
                         </div>
                       </div>
                     ) : null;
@@ -407,14 +462,14 @@ function UserShop({ onAdminClick }) {
             </div>
 
             {cartCount > 0 && (
-              <div style={{ borderTop: '1px solid #e5e7eb', backgroundColor: 'white', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '16px', paddingBottom: '8px', borderBottom: '1px solid #e5e7eb' }}>
+              <div style={{ borderTop: '1px solid #e5e7eb', backgroundColor: 'white', padding: 'clamp(12px, 3vw, 16px)', display: 'flex', flexDirection: 'column', gap: 'clamp(10px, 2vw, 12px)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: 'clamp(14px, 3vw, 16px)', paddingBottom: '8px', borderBottom: '1px solid #e5e7eb' }}>
                   <span>Total</span>
                   <span style={{ color: '#f43f5e' }}>₹{total}</span>
                 </div>
-                <input type="text" placeholder="Your Name" value={name} onChange={(e) => setName(e.target.value)} style={{ width: '100%', padding: '10px', border: '2px solid #e5e7eb', borderRadius: '8px', boxSizing: 'border-box' }} />
-                <input type="tel" placeholder="Phone (10 digits)" value={phone} onChange={(e) => setPhone(e.target.value)} maxLength="10" style={{ width: '100%', padding: '10px', border: '2px solid #e5e7eb', borderRadius: '8px', boxSizing: 'border-box' }} />
-                <button onClick={placeOrder} style={{ width: '100%', backgroundColor: '#f43f5e', color: 'white', padding: '12px', borderRadius: '8px', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}>Order via WhatsApp</button>
+                <input type="text" placeholder="Your Name" value={name} onChange={(e) => setName(e.target.value)} style={{ width: '100%', padding: '12px', border: '2px solid #e5e7eb', borderRadius: '8px', boxSizing: 'border-box', fontSize: '16px', minHeight: '44px' }} />
+                <input type="tel" placeholder="Phone (10 digits)" value={phone} onChange={(e) => setPhone(e.target.value)} maxLength="10" style={{ width: '100%', padding: '12px', border: '2px solid #e5e7eb', borderRadius: '8px', boxSizing: 'border-box', fontSize: '16px', minHeight: '44px' }} />
+                <button onClick={placeOrder} style={{ width: '100%', backgroundColor: '#f43f5e', color: 'white', padding: '12px', borderRadius: '8px', fontWeight: 'bold', border: 'none', cursor: 'pointer', fontSize: '16px', minHeight: '48px' }}>Order via WhatsApp</button>
               </div>
             )}
           </div>
@@ -423,10 +478,10 @@ function UserShop({ onAdminClick }) {
 
       {placed && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div style={{ backgroundColor: 'white', borderRadius: '16px', padding: '32px', textAlign: 'center', maxWidth: '350px' }}>
+          <div style={{ backgroundColor: 'white', borderRadius: '16px', padding: 'clamp(24px, 5vw, 32px)', textAlign: 'center', maxWidth: '350px' }}>
             <div style={{ width: '56px', height: '56px', backgroundColor: '#dcfce7', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}><Check size={28} style={{ color: '#22c55e' }} /></div>
-            <h3 style={{ fontSize: '20px', fontWeight: 'bold', margin: '0 0 8px 0' }}>Order Placed!</h3>
-            <p style={{ color: '#6b7280', margin: 0 }}>Redirecting to WhatsApp...</p>
+            <h3 style={{ fontSize: 'clamp(18px, 4vw, 20px)', fontWeight: 'bold', margin: '0 0 8px 0' }}>Order Placed!</h3>
+            <p style={{ color: '#6b7280', margin: 0, fontSize: 'clamp(13px, 3vw, 15px)' }}>Redirecting to WhatsApp...</p>
           </div>
         </div>
       )}
